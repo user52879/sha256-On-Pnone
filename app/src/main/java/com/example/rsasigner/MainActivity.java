@@ -122,35 +122,42 @@ public class MainActivity extends AppCompatActivity {
      */
     private String signData(String pemKey, String data) throws Exception {
         PrivateKey privateKey = loadPrivateKey(pemKey);
-
-        Signature sig = Signature.getInstance("SHA256withRSA", BouncyCastleProvider.PROVIDER_NAME);
+ 
+        // Do NOT specify BC provider here - let Android pick the right one
+        Signature sig = Signature.getInstance("SHA256withRSA");
         sig.initSign(privateKey);
         sig.update(data.getBytes("UTF-8"));
         byte[] signatureBytes = sig.sign();
-
+ 
         return Base64.getEncoder().encodeToString(signatureBytes);
     }
-
-        private PrivateKey loadPrivateKey(String pem) throws Exception {
-        // Use Bouncy Castle's PEMParser to handle both PKCS#8 and PKCS#1 automatically
+ 
+    private PrivateKey loadPrivateKey(String pem) throws Exception {
         java.io.StringReader stringReader = new java.io.StringReader(pem);
         org.bouncycastle.openssl.PEMParser pemParser = new org.bouncycastle.openssl.PEMParser(stringReader);
         Object obj = pemParser.readObject();
         pemParser.close();
  
-        org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter converter =
-                new org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter()
-                        .setProvider(BouncyCastleProvider.PROVIDER_NAME);
+        if (obj == null) {
+            throw new Exception("私钥内容为空或格式不正确");
+        }
+ 
+        byte[] encoded;
  
         if (obj instanceof org.bouncycastle.asn1.pkcs.PrivateKeyInfo) {
             // PKCS#8: "-----BEGIN PRIVATE KEY-----"
-            return converter.getPrivateKey((org.bouncycastle.asn1.pkcs.PrivateKeyInfo) obj);
+            encoded = ((org.bouncycastle.asn1.pkcs.PrivateKeyInfo) obj).getEncoded();
         } else if (obj instanceof org.bouncycastle.openssl.PEMKeyPair) {
             // PKCS#1: "-----BEGIN RSA PRIVATE KEY-----"
-            return converter.getKeyPair((org.bouncycastle.openssl.PEMKeyPair) obj).getPrivate();
+            encoded = ((org.bouncycastle.openssl.PEMKeyPair) obj).getPrivateKeyInfo().getEncoded();
         } else {
-            throw new Exception("无法识别的私钥格式: " + (obj == null ? "null" : obj.getClass().getName()));
+            throw new Exception("无法识别的私钥格式: " + obj.getClass().getName());
         }
+ 
+        // Use Android's default KeyFactory (not BC) to avoid provider conflict
+        PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(encoded);
+        KeyFactory kf = KeyFactory.getInstance("RSA");
+        return kf.generatePrivate(spec);
     }
 
     private void copyResultToClipboard() {
