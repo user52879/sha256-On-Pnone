@@ -131,35 +131,25 @@ public class MainActivity extends AppCompatActivity {
         return Base64.getEncoder().encodeToString(signatureBytes);
     }
 
-    private PrivateKey loadPrivateKey(String pem) throws Exception {
-        // Strip PEM headers
-        String clean = pem
-                .replace("-----BEGIN PRIVATE KEY-----", "")
-                .replace("-----END PRIVATE KEY-----", "")
-                .replace("-----BEGIN RSA PRIVATE KEY-----", "")
-                .replace("-----END RSA PRIVATE KEY-----", "")
-                .replaceAll("\\s+", "");
-
-        byte[] keyBytes = Base64.getDecoder().decode(clean);
-
-        // Try PKCS#8 first
-        try {
-            PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(keyBytes);
-            KeyFactory kf = KeyFactory.getInstance("RSA", BouncyCastleProvider.PROVIDER_NAME);
-            return kf.generatePrivate(spec);
-        } catch (Exception e) {
-            // Fall back to PKCS#1 via Bouncy Castle
-            org.bouncycastle.asn1.pkcs.RSAPrivateKey rsaKey =
-                    org.bouncycastle.asn1.pkcs.RSAPrivateKey.getInstance(keyBytes);
-            org.bouncycastle.asn1.pkcs.PrivateKeyInfo pki =
-                    new org.bouncycastle.asn1.pkcs.PrivateKeyInfo(
-                            new org.bouncycastle.asn1.x509.AlgorithmIdentifier(
-                                    org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers.rsaEncryption,
-                                    org.bouncycastle.asn1.DERNull.INSTANCE),
-                            rsaKey);
-            PKCS8EncodedKeySpec spec2 = new PKCS8EncodedKeySpec(pki.getEncoded());
-            KeyFactory kf = KeyFactory.getInstance("RSA", BouncyCastleProvider.PROVIDER_NAME);
-            return kf.generatePrivate(spec2);
+        private PrivateKey loadPrivateKey(String pem) throws Exception {
+        // Use Bouncy Castle's PEMParser to handle both PKCS#8 and PKCS#1 automatically
+        java.io.StringReader stringReader = new java.io.StringReader(pem);
+        org.bouncycastle.openssl.PEMParser pemParser = new org.bouncycastle.openssl.PEMParser(stringReader);
+        Object obj = pemParser.readObject();
+        pemParser.close();
+ 
+        org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter converter =
+                new org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter()
+                        .setProvider(BouncyCastleProvider.PROVIDER_NAME);
+ 
+        if (obj instanceof org.bouncycastle.asn1.pkcs.PrivateKeyInfo) {
+            // PKCS#8: "-----BEGIN PRIVATE KEY-----"
+            return converter.getPrivateKey((org.bouncycastle.asn1.pkcs.PrivateKeyInfo) obj);
+        } else if (obj instanceof org.bouncycastle.openssl.PEMKeyPair) {
+            // PKCS#1: "-----BEGIN RSA PRIVATE KEY-----"
+            return converter.getKeyPair((org.bouncycastle.openssl.PEMKeyPair) obj).getPrivate();
+        } else {
+            throw new Exception("无法识别的私钥格式: " + (obj == null ? "null" : obj.getClass().getName()));
         }
     }
 
